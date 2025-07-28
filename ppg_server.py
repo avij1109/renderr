@@ -43,7 +43,6 @@ class PPGProcessor:
         self.hr_freq_range = (0.7, 4.0)  # 42-240 BPM
         self.resp_freq_range = (0.1, 0.5)  # 6-30 breaths per minute
         
-<<<<<<< HEAD
         # BP Analysis parameters
         self.bp_collection_duration = 30  # 30 seconds for BP analysis
         self.bp_collection_active = False
@@ -57,12 +56,11 @@ class PPGProcessor:
         except Exception as e:
             logger.error(f"❌ Failed to initialize BP Analyzer: {str(e)}")
             self.bp_analyzer = None
-=======
+            
         # SMOOTHING: Moving average for stable heart rate
         from collections import deque
         self.hr_history = deque(maxlen=5)  # Last 5 heart rate readings
         self.last_stable_hr = None
->>>>>>> da9344e2517e3898b29c13bd2fc72ddabd7c51f8
         
     def reset(self):
         """Reset all signals for new measurement"""
@@ -72,13 +70,15 @@ class PPGProcessor:
         self.timestamps = []
         self.frame_count = 0
         self.start_time = None
-<<<<<<< HEAD
         
         # Reset BP analysis buffers
         self.bp_collection_active = False
         self.bp_green_signal_buffer = []
         self.bp_start_time = None
         
+        # Reset smoothing history
+        self.hr_history.clear()
+        self.last_stable_hr = None
         logger.info("PPG processor reset (including BP analysis)")
     
     def start_bp_collection(self):
@@ -118,12 +118,6 @@ class PPGProcessor:
                 return {"error": "BP Analyzer not available", "status": "error"}
         else:
             return {"error": "Insufficient data for BP analysis", "samples_collected": len(self.bp_green_signal_buffer), "status": "error"}
-=======
-        # Reset smoothing history
-        self.hr_history.clear()
-        self.last_stable_hr = None
-        logger.info("PPG processor reset")
->>>>>>> da9344e2517e3898b29c13bd2fc72ddabd7c51f8
     
     def extract_rgb_from_frame(self, frame_data: bytes) -> Dict[str, float]:
         """Extract average RGB values from frame data"""
@@ -179,51 +173,6 @@ class PPGProcessor:
             return np.array(data)
     
     def calculate_heart_rate(self, green_signal: List[float]) -> Dict[str, Any]:
-<<<<<<< HEAD
-        """Calculate heart rate using FFT analysis (HealthWatcher method)"""
-        try:
-            if len(green_signal) < 60:  # Need at least 2 seconds
-                return {"heart_rate": 0, "confidence": 0, "method": "insufficient_data"}
-            
-            # Apply bandpass filter for heart rate frequency range
-            filtered_signal = self.apply_bandpass_filter(green_signal, 
-                                                       self.hr_freq_range[0], 
-                                                       self.hr_freq_range[1])
-            
-            # Perform FFT
-            fft_result = fft(filtered_signal)
-            freqs = fftfreq(len(filtered_signal), 1/self.sampling_rate)
-            
-            # Get magnitude and find peak in heart rate range
-            magnitude = np.abs(fft_result)
-            
-            # Find frequencies in heart rate range
-            hr_mask = (freqs >= self.hr_freq_range[0]) & (freqs <= self.hr_freq_range[1])
-            if not np.any(hr_mask):
-                return {"heart_rate": 0, "confidence": 0, "method": "no_valid_frequencies"}
-            
-            hr_freqs = freqs[hr_mask]
-            hr_magnitudes = magnitude[hr_mask]
-            
-            # Find peak frequency
-            peak_idx = np.argmax(hr_magnitudes)
-            peak_freq = hr_freqs[peak_idx]
-            peak_magnitude = hr_magnitudes[peak_idx]
-            
-            # Convert to BPM
-            heart_rate = int(peak_freq * 60)
-            
-            # Calculate confidence based on peak prominence
-            mean_magnitude = np.mean(hr_magnitudes)
-            confidence = min(100, int((peak_magnitude / mean_magnitude) * 20))
-            
-            return {
-                "heart_rate": heart_rate,
-                "confidence": confidence,
-                "method": "fft_analysis",
-                "peak_frequency": float(peak_freq),
-                "signal_quality": "good" if confidence > 50 else "poor"
-=======
         """Calculate EXACT heart rate using time-domain peak detection (from real-time analyzer)"""
         try:
             if len(green_signal) < 60:  # Need at least 2 seconds at 30fps
@@ -357,7 +306,6 @@ class PPGProcessor:
                 "signal_to_noise_ratio": float(signal_to_noise),
                 "hr_history_size": len(self.hr_history),
                 "signal_variance": float(signal_variance)
->>>>>>> da9344e2517e3898b29c13bd2fc72ddabd7c51f8
             }
             
         except Exception as e:
@@ -471,7 +419,6 @@ class PPGProcessor:
             self.timestamps.append(timestamp)
             self.frame_count += 1
             
-<<<<<<< HEAD
             # Add to BP collection buffer if active
             if self.bp_collection_active:
                 self.bp_green_signal_buffer.append(rgb_values["green"])
@@ -487,8 +434,6 @@ class PPGProcessor:
                 bp_analysis_result = None
                 bp_elapsed_time = 0
             
-=======
->>>>>>> da9344e2517e3898b29c13bd2fc72ddabd7c51f8
             # Maintain sliding window
             if len(self.green_signal) > self.window_size:
                 self.green_signal.pop(0)
@@ -503,7 +448,6 @@ class PPGProcessor:
                 "elapsed_time": timestamp - self.start_time,
                 "rgb_values": rgb_values,
                 "buffer_size": len(self.green_signal),
-<<<<<<< HEAD
                 "green_signal_value": rgb_values["green"],  # Current green value for real-time display
                 "bp_collection_active": self.bp_collection_active,
                 "bp_collection_progress": {
@@ -518,11 +462,6 @@ class PPGProcessor:
             if bp_analysis_result:
                 results["bp_analysis_result"] = bp_analysis_result
             
-=======
-                "green_signal_value": rgb_values["green"]  # Current green value for real-time display
-            }
-            
->>>>>>> da9344e2517e3898b29c13bd2fc72ddabd7c51f8
             # Calculate heart rate every 15 frames (twice per second) for responsive display
             if len(self.green_signal) >= 60 and self.frame_count % 15 == 0:
                 hr_result = self.calculate_heart_rate(self.green_signal)
@@ -554,14 +493,10 @@ async def health_check():
         "processor_status": {
             "frame_count": ppg_processor.frame_count,
             "buffer_size": len(ppg_processor.green_signal),
-<<<<<<< HEAD
             "is_active": ppg_processor.start_time is not None,
             "bp_analysis_available": ppg_processor.bp_analyzer is not None,
             "bp_collection_active": ppg_processor.bp_collection_active,
             "bp_samples_collected": len(ppg_processor.bp_green_signal_buffer)
-=======
-            "is_active": ppg_processor.start_time is not None
->>>>>>> da9344e2517e3898b29c13bd2fc72ddabd7c51f8
         }
     }
 
@@ -586,8 +521,6 @@ async def websocket_endpoint(websocket: WebSocket):
                         "status": "success",
                         "timestamp": time.time()
                     }
-                
-<<<<<<< HEAD
                 elif message_type == "start_bp_analysis":
                     ppg_processor.start_bp_collection()
                     response = {
@@ -607,8 +540,6 @@ async def websocket_endpoint(websocket: WebSocket):
                         "timestamp": time.time()
                     }
                 
-=======
->>>>>>> da9344e2517e3898b29c13bd2fc72ddabd7c51f8
                 elif message_type == "frame":
                     frame_data = message.get("frame", "")
                     timestamp = message.get("timestamp", time.time())
