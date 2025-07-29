@@ -100,10 +100,10 @@ class PPGProcessor:
                 if len(self.bp_frames) % 150 == 0:
                     logger.info(f"🔵 BP Collection Progress: {elapsed:.1f}s, {len(self.bp_frames)} samples")
                 
-                # Auto-stop after 40 seconds and analyze (matches Android timer)
-                if elapsed >= 40:
+                # Auto-stop after 30 seconds and analyze (10 seconds before Android timer ends)
+                if elapsed >= 30:
                     self.bp_collection_active = False
-                    logger.info("🔵 Auto-stopped BP collection after 40 seconds - analyzing...")
+                    logger.info("🔵 Auto-stopped BP collection after 30 seconds - analyzing...")
                     return self.analyze_bp()
             
             # Always return PPG signal data immediately
@@ -209,7 +209,7 @@ class PPGProcessor:
                 return {
                     "status": "success",
                     "frame_count": self.frame_count,
-                    "elapsed_time": 40,  # Mark as complete
+                    "elapsed_time": 30,  # BP analysis completed at 30 seconds
                     "bp_analysis_result": {
                         "bp_analysis": {
                             "bp_category": result['category'],
