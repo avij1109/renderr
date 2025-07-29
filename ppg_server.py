@@ -200,10 +200,10 @@ class PPGProcessor:
             logger.info(f"🔵 Analyzing BP with {len(self.bp_frames)} frames...")
             
             # Use BP analyzer
-            result = bp_analyzer.analyze_bp_from_ppg(self.bp_frames)
+            result = bp_analyzer.predict_bp_category(self.bp_frames)
             
-            if result:
-                logger.info(f"🎯 BP Analysis completed: {result['category']} ({result['confidence']}%)")
+            if result and result.get('status') == 'success':
+                logger.info(f"🎯 BP Analysis completed: {result['bp_category']} ({result['confidence']}%)")
                 
                 # Return in Android-compatible format
                 return {
@@ -212,13 +212,13 @@ class PPGProcessor:
                     "elapsed_time": 30,  # BP analysis completed at 30 seconds
                     "bp_analysis_result": {
                         "bp_analysis": {
-                            "bp_category": result['category'],
+                            "bp_category": result['bp_category'],
                             "confidence": result['confidence'],
-                            "quality": result.get('quality', 'good')
+                            "quality": 'good'
                         },
                         "interpretation": {
-                            "category": result['category'],
-                            "description": f"Blood pressure classified as {result['category']}",
+                            "category": result['bp_category'],
+                            "description": f"Blood pressure classified as {result['bp_category']}",
                             "recommendation": "Consult healthcare provider for interpretation",
                             "details": [f"Confidence: {result['confidence']}%"]
                         },
