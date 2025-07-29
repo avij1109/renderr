@@ -421,6 +421,7 @@ class PPGProcessor:
             
             # Auto-start BP collection on first frame
             if self.frame_count == 1 and not self.bp_collection_active:
+                logger.info(f"🔴 FRAME 1 DETECTED: Starting BP collection auto-start")
                 self.start_bp_collection()
                 logger.info("🔴 Auto-started BP analysis with first PPG frame")
             
@@ -428,6 +429,10 @@ class PPGProcessor:
             if self.bp_collection_active:
                 self.bp_green_signal_buffer.append(rgb_values["green"])
                 bp_elapsed_time = time.time() - self.bp_start_time if self.bp_start_time else 0
+                
+                # Log BP collection progress every 5 seconds
+                if len(self.bp_green_signal_buffer) % 150 == 0:  # Every 5 seconds at 30fps
+                    logger.info(f"🔵 BP Collection Progress: {bp_elapsed_time:.1f}s, {len(self.bp_green_signal_buffer)} samples")
                 
                 # Auto-stop collection after 30 seconds
                 if bp_elapsed_time >= self.bp_collection_duration:
