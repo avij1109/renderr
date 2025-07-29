@@ -206,20 +206,35 @@ async def websocket_endpoint(websocket: WebSocket):
         while True:
             # Receive frame data
             data = await websocket.receive_text()
-            message = json.loads(data)
             
-            if message["type"] == "frame":
-                # Process the frame
-                result = processor.process_frame(message["data"])
+            try:
+                message = json.loads(data)
+                logger.info(f"Received message type: {message.get('type', 'unknown')}")
                 
-                if result:
-                    # Send result back to client
-                    await websocket.send_text(json.dumps(result))
-            
-            elif message["type"] == "reset":
-                # Reset processor for new measurement
-                processor.reset()
-                logger.info("🔄 PPG processor reset for new measurement")
+                if message.get("type") == "frame":
+                    # Check if frame data exists in different possible fields
+                    frame_data = message.get("data") or message.get("frame_data") or message.get("image")
+                    
+                    if frame_data:
+                        # Process the frame
+                        result = processor.process_frame(frame_data)
+                        
+                        if result:
+                            # Send result back to client
+                            await websocket.send_text(json.dumps(result))
+                    else:
+                        logger.warning("No frame data found in message")
+                        
+                elif message.get("type") == "reset":
+                    # Reset processor for new measurement
+                    processor.reset()
+                    logger.info("🔄 PPG processor reset for new measurement")
+                    
+            except json.JSONDecodeError as e:
+                logger.error(f"JSON decode error: {e}")
+            except KeyError as e:
+                logger.error(f"Missing key in message: {e}")
+                logger.error(f"Message keys: {list(message.keys()) if 'message' in locals() else 'No message'}")
                 
     except WebSocketDisconnect:
         logger.info("Client disconnected from WebSocket")
