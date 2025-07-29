@@ -96,10 +96,10 @@ class PPGProcessor:
                 if int(elapsed) % 5 == 0 and len(self.bp_frames) % 150 == 0:
                     logger.info(f"🔵 BP Collection Progress: {elapsed:.1f}s, {len(self.bp_frames)} samples")
                 
-                # Auto-stop after 30 seconds and analyze
-                if elapsed >= 30:
+                # Auto-stop after 40 seconds and analyze (matches Android timer)
+                if elapsed >= 40:
                     self.bp_collection_active = False
-                    logger.info("🔵 Auto-stopped BP collection after 30 seconds")
+                    logger.info("🔵 Auto-stopped BP collection after 40 seconds - analyzing...")
                     return self.analyze_bp()
             
             # Calculate heart rate from recent PPG values
@@ -181,7 +181,7 @@ class PPGProcessor:
     
     def analyze_bp(self):
         try:
-            if len(self.bp_frames) < 300:  # Need at least 10 seconds
+            if len(self.bp_frames) < 250:  # Need at least ~8 seconds of data
                 logger.warning(f"Insufficient data for BP analysis: {len(self.bp_frames)} frames")
                 return None
             
