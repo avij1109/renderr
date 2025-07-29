@@ -104,10 +104,7 @@ class PPGProcessor:
                 if elapsed >= 40:
                     self.bp_collection_active = False
                     logger.info("🔵 Auto-stopped BP collection after 40 seconds - analyzing...")
-                    bp_result = self.analyze_bp()
-                    if bp_result:
-                        # Return BP analysis result immediately
-                        return bp_result
+                    return self.analyze_bp()
             
             # Always return PPG signal data immediately
             base_result = {
