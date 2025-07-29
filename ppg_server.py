@@ -92,8 +92,12 @@ class PPGProcessor:
                 self.bp_frames.append(ppg_value)
                 elapsed = (datetime.now() - self.bp_collection_start_time).total_seconds()
                 
-                # Log progress every 5 seconds OR every 150 frames
-                if (int(elapsed) % 5 == 0 and len(self.bp_frames) % 30 == 0) or len(self.bp_frames) % 150 == 0:
+                # Debug: Log every 50 frames to see if collection is working
+                if len(self.bp_frames) % 50 == 0:
+                    logger.info(f"🟡 BP Collection Debug: {elapsed:.1f}s, {len(self.bp_frames)} samples collected")
+                
+                # Log progress every 150 frames (every ~5 seconds at 30fps)
+                if len(self.bp_frames) % 150 == 0:
                     logger.info(f"🔵 BP Collection Progress: {elapsed:.1f}s, {len(self.bp_frames)} samples")
                 
                 # Auto-stop after 40 seconds and analyze (matches Android timer)
