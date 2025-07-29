@@ -213,7 +213,10 @@ async def websocket_endpoint(websocket: WebSocket):
                 
                 if message.get("type") == "frame":
                     # Check if frame data exists in different possible fields
-                    frame_data = message.get("data") or message.get("frame_data") or message.get("image")
+                    frame_data = (message.get("data") or 
+                                message.get("frame_data") or 
+                                message.get("image") or 
+                                message.get("frame"))
                     
                     if frame_data:
                         # Process the frame
@@ -223,7 +226,12 @@ async def websocket_endpoint(websocket: WebSocket):
                             # Send result back to client
                             await websocket.send_text(json.dumps(result))
                     else:
-                        logger.warning("No frame data found in message")
+                        logger.warning(f"No frame data found in message. Available keys: {list(message.keys())}")
+                        await websocket.send_text(json.dumps({
+                            "error": "No frame data found",
+                            "expected_fields": ["data", "frame_data", "image", "frame"],
+                            "received_fields": list(message.keys())
+                        }))
                         
                 elif message.get("type") == "reset":
                     # Reset processor for new measurement
