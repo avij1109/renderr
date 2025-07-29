@@ -2,19 +2,24 @@
 Test MongoDB Atlas connection
 """
 import asyncio
+import os
 from motor.motor_asyncio import AsyncIOMotorClient
 import logging
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 async def test_connection():
-    # Your actual MongoDB Atlas connection string
-    # Replace <db_password> with: dHYqL1bTeKq7x7c
-    MONGODB_URL = "mongodb+srv://ppg_admin:dHYqL1bTeKq7x7c@ppg-health-cluster.uqga5vx.mongodb.net/?retryWrites=true&w=majority&appName=ppg-health-cluster"
+    # Get MongoDB connection string from environment variable
+    MONGODB_URL = os.getenv("MONGODB_URL")
     
     if not MONGODB_URL:
-        print("❌ No MongoDB connection string provided")
+        print("❌ No MongoDB connection string found in environment variables")
+        print("Please create a .env file with MONGODB_URL")
         return False
     
     try:
