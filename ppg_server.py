@@ -154,13 +154,25 @@ class PPGProcessor:
             logger.info(f"Detected {len(peaks)} peaks, avg interval: {avg_interval:.3f}s")
             logger.info(f"Confidence: {confidence}%, Quality: {quality}")
             
+            # Return in Android-compatible format
             return {
-                "heart_rate": int(smoothed_hr),
-                "confidence": confidence,
-                "signal_quality": quality,
-                "raw_hr": raw_hr,
-                "peak_count": len(peaks),
-                "elapsed_time": len(self.ppg_values) / 30
+                "status": "success",
+                "frame_count": self.frame_count,
+                "elapsed_time": len(self.ppg_values) / 30,
+                "rgb_values": {
+                    "red": 0.0,
+                    "green": ppg_values[-1],  # Latest green value
+                    "blue": 0.0,
+                    "width": 0,
+                    "height": 0
+                },
+                "heart_rate": {
+                    "heart_rate": int(smoothed_hr),
+                    "confidence": confidence,
+                    "method": "PPG",
+                    "signal_quality": quality
+                },
+                "green_signal_value": ppg_values[-1]
             }
             
         except Exception as e:
@@ -180,10 +192,28 @@ class PPGProcessor:
             
             if result:
                 logger.info(f"🎯 BP Analysis completed: {result['category']} ({result['confidence']}%)")
+                
+                # Return in Android-compatible format
                 return {
-                    "bp_analysis_result": result,
-                    "analysis_complete": True,
-                    "elapsed_time": 40  # Mark as complete
+                    "status": "success",
+                    "frame_count": self.frame_count,
+                    "elapsed_time": 40,  # Mark as complete
+                    "bp_analysis_result": {
+                        "bp_analysis": {
+                            "bp_category": result['category'],
+                            "confidence": result['confidence'],
+                            "quality": result.get('quality', 'good')
+                        },
+                        "interpretation": {
+                            "category": result['category'],
+                            "description": f"Blood pressure classified as {result['category']}",
+                            "recommendation": "Consult healthcare provider for interpretation",
+                            "details": [f"Confidence: {result['confidence']}%"]
+                        },
+                        "collection_duration": 30.0,
+                        "samples_collected": len(self.bp_frames),
+                        "status": "complete"
+                    }
                 }
             else:
                 logger.warning("⚠️ BP analysis failed")
@@ -223,8 +253,14 @@ async def websocket_endpoint(websocket: WebSocket):
                         result = processor.process_frame(frame_data)
                         
                         if result:
+                            # Format response for Android app
+                            response = {
+                                "type": "result",
+                                "data": result
+                            }
                             # Send result back to client
-                            await websocket.send_text(json.dumps(result))
+                            await websocket.send_text(json.dumps(response))
+                            logger.debug(f"Sent result: HR={result.get('heart_rate', 'N/A')}, Quality={result.get('signal_quality', 'N/A')}")
                     else:
                         logger.warning(f"No frame data found in message. Available keys: {list(message.keys())}")
                         await websocket.send_text(json.dumps({
