@@ -1,5 +1,6 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import base64
 import time
 import json
@@ -11,14 +12,17 @@ from scipy.fft import fft, fftfreq
 import asyncio
 from typing import List, Dict, Any
 import logging
+import os
 
-# Import BP Analyzer
+# Import BP Analyzer and Database
 from bp_analyzer import BPAnalyzer
+from database import db_manager, SubjectCreate, MeasurementCreate
+
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="PPG Signal Processing Server", version="1.0.0")
+app = FastAPI(title="PPG Signal Processing Server with MongoDB", version="2.0.0")
 
 # Add CORS middleware for mobile app connections
 app.add_middleware(
@@ -28,6 +32,87 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Database connection management
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database connection on startup"""
+    await db_manager.connect()
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Close database connection on shutdown"""
+    await db_manager.disconnect()
+
+# ============ API ENDPOINTS FOR SUBJECT MANAGEMENT ============
+
+@app.get("/")
+async def root():
+    return {"message": "PPG Health Server with MongoDB", "version": "2.0.0"}
+
+@app.get("/api/subjects")
+async def get_subjects():
+    """Get all subjects for dropdown menu"""
+    try:
+        subjects = await db_manager.get_all_subjects()
+        return {"success": True, "subjects": subjects}
+    except Exception as e:
+        logger.error(f"❌ Failed to get subjects: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve subjects")
+
+@app.post("/api/subjects")
+async def create_subject(subject_data: SubjectCreate):
+    """Create a new subject"""
+    try:
+        subject_id = await db_manager.create_subject(subject_data)
+        subject = await db_manager.get_subject(subject_id)
+        return {"success": True, "subject": subject}
+    except Exception as e:
+        logger.error(f"❌ Failed to create subject: {e}")
+        raise HTTPException(status_code=500, detail="Failed to create subject")
+
+@app.get("/api/subjects/{subject_id}")
+async def get_subject(subject_id: str):
+    """Get specific subject details"""
+    try:
+        subject = await db_manager.get_subject(subject_id)
+        if not subject:
+            raise HTTPException(status_code=404, detail="Subject not found")
+        return {"success": True, "subject": subject}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"❌ Failed to get subject {subject_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve subject")
+
+@app.get("/api/subjects/{subject_id}/history")
+async def get_subject_history(subject_id: str, limit: int = 50):
+    """Get measurement history for a subject"""
+    try:
+        history = await db_manager.get_subject_history(subject_id, limit)
+        stats = await db_manager.get_subject_stats(subject_id)
+        return {
+            "success": True, 
+            "subject_id": subject_id,
+            "measurements": history,
+            "stats": stats
+        }
+    except Exception as e:
+        logger.error(f"❌ Failed to get history for {subject_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve subject history")
+
+@app.get("/api/subjects/{subject_id}/stats")
+async def get_subject_stats(subject_id: str):
+    """Get statistical summary for a subject"""
+    try:
+        stats = await db_manager.get_subject_stats(subject_id)
+        return {"success": True, "stats": stats}
+    except Exception as e:
+        logger.error(f"❌ Failed to get stats for {subject_id}: {e}")
+        raise HTTPException(status_code=500, detail="Failed to retrieve subject statistics")
+
+# ============ PPG PROCESSING CLASSES ============
+
 class PPGProcessor:
     def __init__(self):
         self.green_signal = []
@@ -549,6 +634,50 @@ async def websocket_endpoint(websocket: WebSocket):
                         "data": bp_result,
                         "timestamp": time.time()
                     }
+                
+                elif message_type == "save_measurement":
+                    # Save measurement to database
+                    subject_id = message.get("subject_id")
+                    measurement_data = message.get("measurement_data", {})
+                    
+                    if not subject_id:
+                        response = {
+                            "type": "error",
+                            "error": "Subject ID is required for saving measurement",
+                            "timestamp": time.time()
+                        }
+                    else:
+                        try:
+                            # Create measurement record
+                            measurement = MeasurementCreate(
+                                subject_id=subject_id,
+                                heart_rate=measurement_data.get("heart_rate", 0),
+                                heart_rate_confidence=measurement_data.get("heart_rate_confidence", 0),
+                                signal_quality=measurement_data.get("signal_quality", "unknown"),
+                                bp_category=measurement_data.get("bp_category"),
+                                bp_confidence=measurement_data.get("bp_confidence"),
+                                measurement_duration=measurement_data.get("measurement_duration", 40),
+                                frame_count=measurement_data.get("frame_count", 0)
+                            )
+                            
+                            # Save to database
+                            measurement_id = await db_manager.save_measurement(measurement)
+                            
+                            response = {
+                                "type": "measurement_saved",
+                                "status": "success",
+                                "measurement_id": measurement_id,
+                                "subject_id": subject_id,
+                                "timestamp": time.time()
+                            }
+                            
+                        except Exception as e:
+                            logger.error(f"❌ Failed to save measurement: {e}")
+                            response = {
+                                "type": "error",
+                                "error": f"Failed to save measurement: {str(e)}",
+                                "timestamp": time.time()
+                            }
                 
                 elif message_type == "frame":
                     frame_data = message.get("frame", "")
