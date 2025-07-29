@@ -102,13 +102,32 @@ class PPGProcessor:
                     logger.info("🔵 Auto-stopped BP collection after 40 seconds - analyzing...")
                     return self.analyze_bp()
             
-            # Calculate heart rate from recent PPG values
-            if len(self.ppg_values) >= 100:  # Need sufficient data
-                recent_values = self.ppg_values[-300:]  # Last 10 seconds at 30fps
+            # Always return PPG signal data immediately
+            base_result = {
+                "status": "success",
+                "frame_count": self.frame_count,
+                "elapsed_time": len(self.ppg_values) / 30,
+                "rgb_values": {
+                    "red": 0.0,
+                    "green": ppg_value,  # Current PPG signal for real-time plotting
+                    "blue": 0.0,
+                    "width": 0,
+                    "height": 0
+                },
+                "green_signal_value": ppg_value
+            }
+            
+            # Calculate heart rate from recent PPG values if we have enough data
+            if len(self.ppg_values) >= 45:  # Need ~3 seconds of data for HR calculation
+                recent_values = self.ppg_values[-150:]  # Last 5 seconds at 30fps
                 hr_result = self.calculate_heart_rate(recent_values)
-                return hr_result
-                
-            return None
+                if hr_result and hr_result.get("heart_rate"):
+                    # Merge heart rate data with base result
+                    base_result.update(hr_result)
+                    return base_result
+            
+            # Return just PPG signal data if no HR yet
+            return base_result
             
         except Exception as e:
             logger.error(f"Error processing frame: {e}")
@@ -130,8 +149,8 @@ class PPGProcessor:
             # Find peaks
             peaks, _ = find_peaks(filtered_signal, distance=fs//3, prominence=np.std(filtered_signal)*0.3)
             
-            if len(peaks) < 5:
-                logger.warning(f"Only {len(peaks)} peaks detected, need at least 5 for stable reading")
+            if len(peaks) < 3:
+                logger.warning(f"Only {len(peaks)} peaks detected, need at least 3 for initial reading")
                 return None
             
             # Calculate heart rate
@@ -154,25 +173,14 @@ class PPGProcessor:
             logger.info(f"Detected {len(peaks)} peaks, avg interval: {avg_interval:.3f}s")
             logger.info(f"Confidence: {confidence}%, Quality: {quality}")
             
-            # Return in Android-compatible format
+            # Return only heart rate data (base result will be merged separately)
             return {
-                "status": "success",
-                "frame_count": self.frame_count,
-                "elapsed_time": len(self.ppg_values) / 30,
-                "rgb_values": {
-                    "red": 0.0,
-                    "green": ppg_values[-1],  # Latest green value
-                    "blue": 0.0,
-                    "width": 0,
-                    "height": 0
-                },
                 "heart_rate": {
                     "heart_rate": int(smoothed_hr),
                     "confidence": confidence,
                     "method": "PPG",
                     "signal_quality": quality
-                },
-                "green_signal_value": ppg_values[-1]
+                }
             }
             
         except Exception as e:
@@ -252,6 +260,7 @@ async def websocket_endpoint(websocket: WebSocket):
                         # Process the frame
                         result = processor.process_frame(frame_data)
                         
+                        # Always send result (either PPG signal + HR, or just PPG signal)
                         if result:
                             # Format response for Android app
                             response = {
@@ -260,7 +269,15 @@ async def websocket_endpoint(websocket: WebSocket):
                             }
                             # Send result back to client
                             await websocket.send_text(json.dumps(response))
-                            logger.debug(f"Sent result: HR={result.get('heart_rate', 'N/A')}, Quality={result.get('signal_quality', 'N/A')}")
+                            
+                            # Log different messages based on what's available
+                            if result.get('heart_rate'):
+                                hr_info = result['heart_rate']
+                                logger.debug(f"Sent: PPG={result['green_signal_value']:.1f}, HR={hr_info['heart_rate']} BPM, Quality={hr_info['signal_quality']}")
+                            else:
+                                logger.debug(f"Sent: PPG signal={result['green_signal_value']:.1f} (collecting data...)")
+                        else:
+                            logger.warning("Frame processing returned no result")
                     else:
                         logger.warning(f"No frame data found in message. Available keys: {list(message.keys())}")
                         await websocket.send_text(json.dumps({
