@@ -419,6 +419,11 @@ class PPGProcessor:
             self.timestamps.append(timestamp)
             self.frame_count += 1
             
+            # Auto-start BP collection on first frame
+            if self.frame_count == 1 and not self.bp_collection_active:
+                self.start_bp_collection()
+                logger.info("🔴 Auto-started BP analysis with first PPG frame")
+            
             # Add to BP collection buffer if active
             if self.bp_collection_active:
                 self.bp_green_signal_buffer.append(rgb_values["green"])
