@@ -104,7 +104,24 @@ class PPGProcessor:
                 if elapsed >= 30:
                     self.bp_collection_active = False
                     logger.info("🔵 Auto-stopped BP collection after 30 seconds - analyzing...")
-                    return self.analyze_bp()
+                    bp_result = self.analyze_bp()
+                    if bp_result:
+                        # Merge BP result with base PPG data
+                        base_result = {
+                            "status": "success",
+                            "frame_count": self.frame_count,
+                            "elapsed_time": len(self.ppg_values) / 30,
+                            "rgb_values": {
+                                "red": 0.0,
+                                "green": ppg_value,  # Current PPG signal for real-time plotting
+                                "blue": 0.0,
+                                "width": 0,
+                                "height": 0
+                            },
+                            "green_signal_value": ppg_value
+                        }
+                        base_result.update(bp_result)
+                        return base_result
             
             # Always return PPG signal data immediately
             base_result = {
@@ -205,11 +222,8 @@ class PPGProcessor:
             if result and result.get('status') == 'success':
                 logger.info(f"🎯 BP Analysis completed: {result['bp_category']} ({result['confidence']}%)")
                 
-                # Return in Android-compatible format
+                # Return only BP-specific data (will be merged with base result)
                 return {
-                    "status": "success",
-                    "frame_count": self.frame_count,
-                    "elapsed_time": 30,  # BP analysis completed at 30 seconds
                     "bp_analysis_result": {
                         "bp_analysis": {
                             "bp_category": result['bp_category'],
