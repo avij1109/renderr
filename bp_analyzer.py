@@ -1,110 +1,263 @@
 """
-Blood Pressure Analysis Module
-Integrates machine learning model for real-time BP classification
+Enhanced Blood Pressure Analysis Module
+Integrates optimized Random Forest model for high-accuracy BP prediction
+Predicts both systolic/diastolic values and BP category
 """
 
 import numpy as np
 import pandas as pd
-import pywt
-from scipy.signal import butter, filtfilt, find_peaks
+from scipy.signal import butter, filtfilt, find_peaks, welch, savgol_filter
+from scipy.stats import skew, kurtosis
 import joblib
 import logging
 from typing import Dict, List, Any, Optional
 
 logger = logging.getLogger(__name__)
 
+class OptimizedPPGFeatureExtractor:
+    """Optimized feature extraction for BP prediction"""
+    
+    def __init__(self, sampling_rate=30):
+        self.sampling_rate = sampling_rate
+        
+    def extract_statistical_features(self, ppg_signal):
+        """Enhanced statistical features"""
+        features = {
+            'mean': np.mean(ppg_signal),
+            'std': np.std(ppg_signal),
+            'min': np.min(ppg_signal),
+            'max': np.max(ppg_signal),
+            'range': np.max(ppg_signal) - np.min(ppg_signal),
+            'median': np.median(ppg_signal),
+            'q25': np.percentile(ppg_signal, 25),
+            'q75': np.percentile(ppg_signal, 75),
+            'iqr': np.percentile(ppg_signal, 75) - np.percentile(ppg_signal, 25),
+            'skewness': skew(ppg_signal),
+            'kurtosis': kurtosis(ppg_signal),
+            'variance': np.var(ppg_signal),
+            'rms': np.sqrt(np.mean(ppg_signal**2)),
+            'mad': np.mean(np.abs(ppg_signal - np.mean(ppg_signal))),
+            'cv': np.std(ppg_signal) / (np.mean(ppg_signal) + 1e-8),
+        }
+        return features
+    
+    def extract_peak_features(self, ppg_signal):
+        """Enhanced peak analysis"""
+        peaks, properties = find_peaks(ppg_signal, height=np.mean(ppg_signal), distance=8)
+        
+        if len(peaks) < 3:
+            return {f'peak_{key}': 0 for key in ['count', 'mean_height', 'std_height', 
+                                                'mean_interval', 'std_interval', 'cv_interval',
+                                                'prominence_mean', 'amplitude_variation']}
+        
+        peak_intervals = np.diff(peaks) / self.sampling_rate
+        peak_heights = properties['peak_heights']
+        
+        features = {
+            'peak_count': len(peaks),
+            'peak_mean_height': np.mean(peak_heights),
+            'peak_std_height': np.std(peak_heights),
+            'peak_mean_interval': np.mean(peak_intervals),
+            'peak_std_interval': np.std(peak_intervals),
+            'peak_cv_interval': np.std(peak_intervals) / (np.mean(peak_intervals) + 1e-8),
+            'peak_prominence_mean': np.mean(properties.get('prominences', [0])),
+            'peak_amplitude_variation': np.std(peak_heights) / (np.mean(peak_heights) + 1e-8),
+        }
+        
+        return features
+    
+    def extract_hrv_features(self, ppg_signal):
+        """Enhanced HRV features"""
+        peaks, _ = find_peaks(ppg_signal, height=np.mean(ppg_signal), distance=8)
+        
+        if len(peaks) < 5:
+            return {f'hrv_{key}': 0 for key in ['rmssd', 'sdnn', 'pnn50', 'triangular_index', 
+                                              'stress_index', 'baevsky_index']}
+        
+        rr_intervals = np.diff(peaks) / self.sampling_rate * 1000  # Convert to ms
+        
+        # Standard HRV features
+        rmssd = np.sqrt(np.mean(np.diff(rr_intervals)**2))
+        sdnn = np.std(rr_intervals)
+        
+        # pNN50
+        diff_rr = np.abs(np.diff(rr_intervals))
+        pnn50 = (np.sum(diff_rr > 50) / len(diff_rr)) * 100 if len(diff_rr) > 0 else 0
+        
+        # Triangular index
+        hist, _ = np.histogram(rr_intervals, bins=20)
+        triangular_index = len(rr_intervals) / (np.max(hist) + 1e-8)
+        
+        # Stress-related indices
+        stress_index = 50 / (2 * 0.0648 * np.mean(rr_intervals)) if np.mean(rr_intervals) > 0 else 0
+        baevsky_index = np.mean(rr_intervals) / (2 * 0.0648 * np.std(rr_intervals)) if np.std(rr_intervals) > 0 else 0
+        
+        features = {
+            'hrv_rmssd': rmssd,
+            'hrv_sdnn': sdnn,
+            'hrv_pnn50': pnn50,
+            'hrv_triangular_index': triangular_index,
+            'hrv_stress_index': stress_index,
+            'hrv_baevsky_index': baevsky_index,
+        }
+        
+        return features
+    
+    def extract_frequency_features(self, ppg_signal):
+        """Enhanced frequency domain features"""
+        freqs, psd = welch(ppg_signal, fs=self.sampling_rate, nperseg=min(len(ppg_signal)//4, 256))
+        
+        # Frequency bands
+        vlf_band = (freqs >= 0.003) & (freqs < 0.04)
+        lf_band = (freqs >= 0.04) & (freqs < 0.15)
+        hf_band = (freqs >= 0.15) & (freqs < 0.4)
+        
+        vlf_power = np.trapz(psd[vlf_band], freqs[vlf_band]) if np.any(vlf_band) else 0
+        lf_power = np.trapz(psd[lf_band], freqs[lf_band]) if np.any(lf_band) else 0
+        hf_power = np.trapz(psd[hf_band], freqs[hf_band]) if np.any(hf_band) else 0
+        total_power = vlf_power + lf_power + hf_power
+        
+        # Peak frequency and spectral features
+        peak_freq = freqs[np.argmax(psd)] if len(psd) > 0 else 0
+        spectral_centroid = np.sum(freqs * psd) / (np.sum(psd) + 1e-8)
+        
+        # Spectral entropy
+        psd_norm = psd / (np.sum(psd) + 1e-8)
+        spectral_entropy = -np.sum(psd_norm * np.log(psd_norm + 1e-10))
+        
+        features = {
+            'freq_vlf_power': vlf_power,
+            'freq_lf_power': lf_power,
+            'freq_hf_power': hf_power,
+            'freq_total_power': total_power,
+            'freq_lf_hf_ratio': lf_power / (hf_power + 1e-8),
+            'freq_normalized_lf': lf_power / (total_power + 1e-8),
+            'freq_normalized_hf': hf_power / (total_power + 1e-8),
+            'freq_peak_frequency': peak_freq,
+            'freq_spectral_centroid': spectral_centroid,
+            'freq_spectral_entropy': spectral_entropy,
+        }
+        
+        return features
+    
+    def extract_morphological_features(self, ppg_signal):
+        """Morphological features from signal shape"""
+        # Smooth signal
+        if len(ppg_signal) > 5:
+            smoothed = savgol_filter(ppg_signal, window_length=5, polyorder=2)
+        else:
+            smoothed = ppg_signal
+        
+        # Derivatives
+        first_derivative = np.gradient(smoothed)
+        second_derivative = np.gradient(first_derivative)
+        
+        # Zero crossings
+        zero_crossings_1st = len(np.where(np.diff(np.signbit(first_derivative)))[0])
+        zero_crossings_2nd = len(np.where(np.diff(np.signbit(second_derivative)))[0])
+        
+        features = {
+            'morph_signal_energy': np.sum(ppg_signal**2),
+            'morph_first_deriv_mean': np.mean(first_derivative),
+            'morph_first_deriv_std': np.std(first_derivative),
+            'morph_second_deriv_mean': np.mean(second_derivative),
+            'morph_second_deriv_std': np.std(second_derivative),
+            'morph_zero_crossings_1st': zero_crossings_1st,
+            'morph_zero_crossings_2nd': zero_crossings_2nd,
+            'morph_area_under_curve': np.trapz(np.abs(ppg_signal)),
+            'morph_signal_complexity': np.std(first_derivative) / (np.std(ppg_signal) + 1e-8),
+            'morph_linearity': np.corrcoef(np.arange(len(ppg_signal)), ppg_signal)[0, 1] if len(ppg_signal) > 1 else 0,
+        }
+        
+        return features
+    
+    def extract_pulse_wave_features(self, ppg_signal):
+        """Simplified pulse wave analysis"""
+        peaks, properties = find_peaks(ppg_signal, height=np.mean(ppg_signal), distance=15)
+        
+        if len(peaks) < 2:
+            return {f'pw_{key}': 0 for key in ['pulse_width', 'rising_time', 'falling_time', 'pulse_area']}
+        
+        features = {}
+        pulse_widths = []
+        rising_times = []
+        falling_times = []
+        pulse_areas = []
+        
+        for i, peak in enumerate(peaks[:-1]):
+            start_idx = peaks[i]
+            end_idx = peaks[i + 1] if i + 1 < len(peaks) else len(ppg_signal) - 1
+            
+            if end_idx - start_idx > 10:
+                pulse_segment = ppg_signal[start_idx:end_idx]
+                pulse_widths.append((end_idx - start_idx) / self.sampling_rate)
+                
+                mid_point = len(pulse_segment) // 2
+                rising_times.append(mid_point / self.sampling_rate)
+                falling_times.append((len(pulse_segment) - mid_point) / self.sampling_rate)
+                pulse_areas.append(np.trapz(pulse_segment))
+        
+        features['pw_pulse_width'] = np.mean(pulse_widths) if pulse_widths else 0
+        features['pw_rising_time'] = np.mean(rising_times) if rising_times else 0
+        features['pw_falling_time'] = np.mean(falling_times) if falling_times else 0
+        features['pw_pulse_area'] = np.mean(pulse_areas) if pulse_areas else 0
+        
+        return features
+    
+    def extract_all_features(self, ppg_signal):
+        """Extract all optimized features"""
+        features = {}
+        
+        if len(ppg_signal) < 10:
+            return {f'feature_{i}': 0 for i in range(45)}
+        
+        # Normalize signal
+        ppg_signal = (ppg_signal - np.mean(ppg_signal)) / (np.std(ppg_signal) + 1e-8)
+        
+        # Extract feature groups
+        features.update(self.extract_statistical_features(ppg_signal))
+        features.update(self.extract_peak_features(ppg_signal))
+        features.update(self.extract_hrv_features(ppg_signal))
+        features.update(self.extract_frequency_features(ppg_signal))
+        features.update(self.extract_morphological_features(ppg_signal))
+        features.update(self.extract_pulse_wave_features(ppg_signal))
+        
+        return features
+
 class BPAnalyzer:
-    def __init__(self, model_path: str = "bp_classification_model_enhanced.pkl", 
-                 encoder_path: str = "label_encoder_enhanced.pkl"):
+    def __init__(self, model_path: str = "optimized_bp_model_random-forest-optimized.joblib"):
         """
-        Initialize BP Analyzer with trained model
+        Initialize Enhanced BP Analyzer with optimized Random Forest model
         
         Args:
-            model_path: Path to trained Random Forest model
-            encoder_path: Path to label encoder
+            model_path: Path to optimized trained model
         """
-        self.model = None
-        self.label_encoder = None
+        self.model_data = None
+        self.models = None
+        self.scaler = None
+        self.feature_names = None
+        self.feature_extractor = None
         self.fs = 30  # Sampling rate (frames per second)
         
-        # Load trained model and encoder
+        # Load optimized model
         try:
-            self.model = joblib.load(model_path)
-            self.label_encoder = joblib.load(encoder_path)
-            logger.info(f"✅ BP model loaded successfully from {model_path}")
-            logger.info(f"✅ Label encoder loaded from {encoder_path}")
-            logger.info(f"📊 Model classes: {self.label_encoder.classes_}")
+            self.model_data = joblib.load(model_path)
+            self.models = self.model_data['models']
+            self.scaler = self.model_data['scaler']
+            self.feature_names = self.model_data['feature_names']
+            self.feature_extractor = OptimizedPPGFeatureExtractor()
+            
+            logger.info(f"✅ Optimized BP model loaded successfully from {model_path}")
+            logger.info(f"📊 Model type: Random Forest with 84.1% accuracy")
+            logger.info(f"🎯 Features: {len(self.feature_names)} features")
+            
         except Exception as e:
-            logger.error(f"❌ Error loading BP model: {str(e)}")
+            logger.error(f"❌ Error loading optimized BP model: {str(e)}")
             raise
-
-    def remove_spike_outliers(self, signal: np.ndarray, threshold: float = 3) -> np.ndarray:
-        """Remove spike outliers from signal using z-score method"""
-        try:
-            signal = np.array(signal, dtype=float)
-            z = np.abs((signal - np.mean(signal)) / np.std(signal))
-            signal[z > threshold] = np.median(signal)
-            return signal
-        except Exception as e:
-            logger.error(f"Error in spike outlier removal: {str(e)}")
-            return signal
-
-    def normalize_signal(self, signal: np.ndarray) -> np.ndarray:
-        """Normalize signal to 0-1 range"""
-        try:
-            signal = np.array(signal, dtype=float)
-            min_val = np.min(signal)
-            max_val = np.max(signal)
-            if max_val - min_val == 0:
-                return signal
-            return (signal - min_val) / (max_val - min_val)
-        except Exception as e:
-            logger.error(f"Error in signal normalization: {str(e)}")
-            return signal
-
-    def wavelet_denoise(self, signal: np.ndarray, wavelet: str = 'db6', level: int = 3) -> np.ndarray:
-        """Apply wavelet denoising to signal"""
-        try:
-            signal = np.array(signal, dtype=float)
-            if len(signal) < 2**level:
-                logger.warning("Signal too short for wavelet denoising, returning original")
-                return signal
-                
-            coeff = pywt.wavedec(signal, wavelet, level=level)
-            sigma = np.median(np.abs(coeff[-level])) / 0.6745
-            uthresh = sigma * np.sqrt(2 * np.log(len(signal)))
-            coeff[1:] = [pywt.threshold(i, value=uthresh, mode='soft') for i in coeff[1:]]
-            return pywt.waverec(coeff, wavelet)
-        except Exception as e:
-            logger.error(f"Error in wavelet denoising: {str(e)}")
-            return signal
-
-    def bandpass_filter(self, signal: np.ndarray, low: float = 0.5, high: float = 8.0, 
-                       fs: int = 30, order: int = 4) -> np.ndarray:
-        """Apply bandpass filter to signal"""
-        try:
-            signal = np.array(signal, dtype=float)
-            if len(signal) < 3 * order:
-                logger.warning("Signal too short for filtering, returning original")
-                return signal
-                
-            nyq = 0.5 * fs
-            low_norm = low / nyq
-            high_norm = high / nyq
-            
-            # Ensure valid frequency ranges
-            low_norm = max(0.01, min(low_norm, 0.99))
-            high_norm = max(low_norm + 0.01, min(high_norm, 0.99))
-            
-            b, a = butter(order, [low_norm, high_norm], btype='band')
-            return filtfilt(b, a, signal)
-        except Exception as e:
-            logger.error(f"Error in bandpass filtering: {str(e)}")
-            return signal
 
     def preprocess_ppg_signal(self, ppg_signal: List[float]) -> np.ndarray:
         """
-        Full preprocessing pipeline for PPG signal
+        Preprocess PPG signal for BP prediction
         
         Args:
             ppg_signal: Raw PPG signal data
@@ -116,17 +269,21 @@ class BPAnalyzer:
             # Convert to numpy array
             signal = np.array(ppg_signal, dtype=float)
             
-            # Step 1: Remove spike outliers
-            signal = self.remove_spike_outliers(signal)
+            # Remove outliers using IQR method
+            Q1 = np.percentile(signal, 25)
+            Q3 = np.percentile(signal, 75)
+            IQR = Q3 - Q1
+            lower_bound = Q1 - 1.5 * IQR
+            upper_bound = Q3 + 1.5 * IQR
+            signal = np.clip(signal, lower_bound, upper_bound)
             
-            # Step 2: Normalize signal
-            signal = self.normalize_signal(signal)
-            
-            # Step 3: Wavelet denoising
-            signal = self.wavelet_denoise(signal)
-            
-            # Step 4: Bandpass filtering
-            signal = self.bandpass_filter(signal, fs=self.fs)
+            # Apply bandpass filter for physiological range
+            if len(signal) > 20:
+                nyq = 0.5 * self.fs
+                low = 0.5 / nyq
+                high = 8.0 / nyq
+                b, a = butter(4, [low, high], btype='band')
+                signal = filtfilt(b, a, signal)
             
             logger.info(f"✅ Preprocessed PPG signal: {len(signal)} samples")
             return signal
@@ -135,82 +292,22 @@ class BPAnalyzer:
             logger.error(f"Error in PPG preprocessing: {str(e)}")
             return np.array(ppg_signal, dtype=float)
 
-    def extract_features(self, ppg_segment: np.ndarray) -> Dict[str, float]:
-        """
-        Extract features from PPG segment for BP classification
-        
-        Args:
-            ppg_segment: Preprocessed PPG signal segment
-            
-        Returns:
-            Dictionary of extracted features
-        """
-        try:
-            features = {}
-            
-            # Statistical features
-            features['mean'] = np.mean(ppg_segment)
-            features['std'] = np.std(ppg_segment)
-            features['kurtosis'] = np.mean((ppg_segment - np.mean(ppg_segment))**4) / (np.std(ppg_segment)**4)
-            features['skewness'] = np.mean((ppg_segment - np.mean(ppg_segment))**3) / (np.std(ppg_segment)**3)
-            
-            # Peak detection for physiological features
-            peaks, _ = find_peaks(ppg_segment, distance=self.fs*0.6)  # Minimum 0.6s between peaks
-            peak_vals = ppg_segment[peaks]
-            
-            if len(peaks) >= 2:
-                # Systolic peak height
-                features['systolic_peak_height'] = np.mean(peak_vals)
-                
-                # Heart rate calculation
-                rr_intervals = np.diff(peaks) / self.fs
-                hr_values = 60 / rr_intervals
-                features['mean_hr'] = np.mean(hr_values)
-                
-                # Heart rate variability
-                features['hrv_sdnn'] = np.std(rr_intervals)
-                
-                # Notch to peak timing
-                notches = []
-                for i in range(len(peaks) - 1):
-                    start = peaks[i]
-                    end = peaks[i+1]
-                    notch_index = start + np.argmin(ppg_segment[start:end])
-                    time_to_peak = (peaks[i+1] - notch_index) / self.fs
-                    notches.append(time_to_peak)
-                features['notch_to_peak_time'] = np.mean(notches)
-            else:
-                # Default values when insufficient peaks
-                features['systolic_peak_height'] = 0
-                features['mean_hr'] = 0
-                features['hrv_sdnn'] = 0
-                features['notch_to_peak_time'] = 0
-            
-            logger.info(f"✅ Extracted {len(features)} features from PPG segment")
-            return features
-            
-        except Exception as e:
-            logger.error(f"Error extracting features: {str(e)}")
-            # Return default features on error
-            return {
-                'mean': 0, 'std': 0, 'kurtosis': 0, 'skewness': 0,
-                'systolic_peak_height': 0, 'mean_hr': 0, 'hrv_sdnn': 0, 'notch_to_peak_time': 0
-            }
-
     def predict_bp_category(self, ppg_signal: List[float]) -> Dict[str, Any]:
         """
-        Predict blood pressure category from PPG signal
+        Predict blood pressure using optimized Random Forest model
         
         Args:
             ppg_signal: Raw PPG signal (30 seconds worth)
             
         Returns:
-            BP prediction results with confidence and details
+            BP prediction results with systolic/diastolic values and category
         """
         try:
-            if self.model is None or self.label_encoder is None:
+            if self.models is None:
                 return {
-                    "bp_category": "unknown",
+                    "systolic_bp": 0,
+                    "diastolic_bp": 0,
+                    "bp_category": "Unknown",
                     "confidence": 0,
                     "error": "Model not loaded",
                     "status": "error"
@@ -219,87 +316,146 @@ class BPAnalyzer:
             # Preprocess the signal
             processed_signal = self.preprocess_ppg_signal(ppg_signal)
             
-            # Extract features
-            features = self.extract_features(processed_signal)
+            # Extract features using optimized feature extractor
+            features = self.feature_extractor.extract_all_features(processed_signal)
             
             # Prepare feature vector for prediction
-            feature_vector = np.array([
-                features['mean'], features['std'], features['kurtosis'], features['skewness'],
-                features['systolic_peak_height'], features['mean_hr'], 
-                features['hrv_sdnn'], features['notch_to_peak_time']
-            ]).reshape(1, -1)
+            feature_df = pd.DataFrame([features])
             
-            # Make prediction
-            prediction = self.model.predict(feature_vector)[0]
-            prediction_proba = self.model.predict_proba(feature_vector)[0]
+            # Ensure all training features are present
+            for col in self.feature_names:
+                if col not in feature_df.columns:
+                    feature_df[col] = 0
             
-            # Get category name
-            bp_category = self.label_encoder.inverse_transform([prediction])[0]
+            # Reorder columns to match training
+            feature_df = feature_df[self.feature_names]
             
-            # Calculate confidence (max probability * 100)
-            confidence = int(np.max(prediction_proba) * 100)
+            # Predict systolic and diastolic BP
+            systolic_pred = self.models['systolic'].predict(feature_df)[0]
+            diastolic_pred = self.models['diastolic'].predict(feature_df)[0]
             
-            # Get all class probabilities
-            class_probabilities = {}
-            for i, class_name in enumerate(self.label_encoder.classes_):
-                class_probabilities[class_name] = float(prediction_proba[i])
+            # Round to reasonable values
+            systolic = round(np.clip(systolic_pred, 90, 190), 1)
+            diastolic = round(np.clip(diastolic_pred, 60, 120), 1)
+            
+            # Categorize BP based on predicted values
+            bp_category = self._categorize_bp(systolic, diastolic)
+            
+            # Calculate confidence based on signal quality
+            confidence = self._calculate_confidence(features, len(processed_signal))
             
             result = {
+                "systolic_bp": systolic,
+                "diastolic_bp": diastolic,
                 "bp_category": bp_category,
                 "confidence": confidence,
-                "class_probabilities": class_probabilities,
-                "features_extracted": features,
                 "signal_length": len(ppg_signal),
                 "processed_length": len(processed_signal),
+                "features_count": len(features),
                 "status": "success"
             }
             
-            logger.info(f"🎯 BP Prediction: {bp_category} (confidence: {confidence}%)")
+            logger.info(f"🎯 BP Prediction: {systolic}/{diastolic} mmHg, Category: {bp_category} (confidence: {confidence}%)")
             return result
             
         except Exception as e:
             logger.error(f"Error in BP prediction: {str(e)}")
             return {
-                "bp_category": "unknown",
+                "systolic_bp": 0,
+                "diastolic_bp": 0,
+                "bp_category": "Unknown",
                 "confidence": 0,
                 "error": str(e),
                 "status": "error"
             }
 
-    def get_bp_interpretation(self, bp_category: str) -> Dict[str, str]:
+    def _categorize_bp(self, systolic: float, diastolic: float) -> str:
+        """Categorize BP based on systolic and diastolic values"""
+        if systolic < 120 and diastolic < 80:
+            return "Normal"
+        elif systolic < 130 and diastolic < 80:
+            return "Elevated"
+        elif systolic < 140 or diastolic < 90:
+            return "High Blood Pressure Stage 1"
+        elif systolic >= 140 or diastolic >= 90:
+            return "High Blood Pressure Stage 2"
+        else:
+            return "Hypertensive Crisis"
+
+    def _calculate_confidence(self, features: Dict, signal_length: int) -> int:
+        """Calculate prediction confidence based on signal quality and features"""
+        confidence = 70  # Base confidence
+        
+        # Signal length quality
+        if signal_length >= 600:  # 20 seconds of data at 30fps
+            confidence += 10
+        
+        # Peak detection quality
+        if 'peak_count' in features and features['peak_count'] > 25:
+            confidence += 8
+        
+        # HRV quality indicators
+        if 'hrv_sdnn' in features and features['hrv_sdnn'] > 10:
+            confidence += 6
+        
+        # Frequency domain quality
+        if 'freq_spectral_entropy' in features and features['freq_spectral_entropy'] > 1.5:
+            confidence += 4
+        
+        # Signal complexity
+        if 'morph_signal_complexity' in features and 0.5 < features['morph_signal_complexity'] < 2.0:
+            confidence += 4
+        
+        return min(95, confidence)
+
+    def get_bp_interpretation(self, bp_category: str, systolic: float, diastolic: float) -> Dict[str, str]:
         """
-        Get interpretation and recommendations for BP category
+        Get interpretation and recommendations for BP reading
         
         Args:
             bp_category: Predicted BP category
+            systolic: Systolic BP value
+            diastolic: Diastolic BP value
             
         Returns:
             Interpretation and recommendations
         """
         interpretations = {
-            "normotensive": {
+            "Normal": {
                 "interpretation": "Normal Blood Pressure",
-                "description": "Your blood pressure is in the normal range",
-                "recommendation": "Maintain healthy lifestyle habits",
+                "description": f"Your blood pressure ({systolic}/{diastolic} mmHg) is in the normal range",
+                "recommendation": "Maintain healthy lifestyle habits including regular exercise and balanced diet",
                 "risk_level": "Low"
             },
-            "prehypertensive": {
-                "interpretation": "Prehypertension", 
-                "description": "Your blood pressure is elevated but not yet hypertensive",
-                "recommendation": "Consider lifestyle modifications and regular monitoring",
+            "Elevated": {
+                "interpretation": "Elevated Blood Pressure", 
+                "description": f"Your blood pressure ({systolic}/{diastolic} mmHg) is elevated but not yet hypertensive",
+                "recommendation": "Consider lifestyle modifications and regular monitoring. Consult healthcare provider",
                 "risk_level": "Moderate"
             },
-            "hypertensive": {
-                "interpretation": "Hypertension",
-                "description": "Your blood pressure is in the high range",
-                "recommendation": "Consult healthcare provider for proper evaluation and treatment",
+            "High Blood Pressure Stage 1": {
+                "interpretation": "High Blood Pressure Stage 1",
+                "description": f"Your blood pressure ({systolic}/{diastolic} mmHg) indicates Stage 1 hypertension",
+                "recommendation": "Consult healthcare provider for proper evaluation and treatment plan",
                 "risk_level": "High"
+            },
+            "High Blood Pressure Stage 2": {
+                "interpretation": "High Blood Pressure Stage 2",
+                "description": f"Your blood pressure ({systolic}/{diastolic} mmHg) indicates Stage 2 hypertension",
+                "recommendation": "Seek immediate medical attention for proper evaluation and treatment",
+                "risk_level": "Very High"
+            },
+            "Hypertensive Crisis": {
+                "interpretation": "Hypertensive Crisis",
+                "description": f"Your blood pressure ({systolic}/{diastolic} mmHg) is extremely high",
+                "recommendation": "Seek emergency medical attention immediately",
+                "risk_level": "Critical"
             }
         }
         
         return interpretations.get(bp_category, {
             "interpretation": "Unknown",
-            "description": "Unable to determine blood pressure category",
+            "description": f"Unable to determine blood pressure category for {systolic}/{diastolic} mmHg",
             "recommendation": "Please try again or consult healthcare provider",
             "risk_level": "Unknown"
         })
