@@ -225,12 +225,12 @@ class OptimizedPPGFeatureExtractor:
         return features
 
 class BPAnalyzer:
-    def __init__(self, model_path: str = "compact_bp_model.joblib"):
+    def __init__(self, model_path: str = "real_ppg_bp_model.joblib"):
         """
-        Initialize Enhanced BP Analyzer with optimized Random Forest model
+        Initialize Enhanced BP Analyzer with real data model
         
         Args:
-            model_path: Path to optimized trained model
+            model_path: Path to real data trained model (97.9% systolic, 87.5% diastolic accuracy)
         """
         self.model_data = None
         self.models = None
@@ -247,12 +247,12 @@ class BPAnalyzer:
             self.feature_names = self.model_data['feature_names']
             self.feature_extractor = OptimizedPPGFeatureExtractor()
             
-            logger.info(f"✅ Optimized BP model loaded successfully from {model_path}")
-            logger.info(f"📊 Model type: Random Forest with 84.1% accuracy")
+            logger.info(f"✅ Real data BP model loaded successfully from {model_path}")
+            logger.info(f"📊 Model type: XGBoost with 97.9% systolic, 87.5% diastolic accuracy")
             logger.info(f"🎯 Features: {len(self.feature_names)} features")
             
         except Exception as e:
-            logger.error(f"❌ Error loading optimized BP model: {str(e)}")
+            logger.error(f"❌ Error loading real data BP model: {str(e)}")
             raise
 
     def preprocess_ppg_signal(self, ppg_signal: List[float]) -> np.ndarray:
