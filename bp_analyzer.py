@@ -14,6 +14,92 @@ from typing import Dict, List, Any, Optional
 
 logger = logging.getLogger(__name__)
 
+def extract_enhanced_features(ppg_segment, fs=125):
+    """Enhanced feature extraction for BP regression (compatibility with real data model)"""
+    features = {}
+    
+    # Statistical features
+    features['mean'] = np.mean(ppg_segment)
+    features['std'] = np.std(ppg_segment)
+    features['skewness'] = skew(ppg_segment)
+    features['kurtosis'] = kurtosis(ppg_segment)
+    features['variance'] = np.var(ppg_segment)
+    features['rms'] = np.sqrt(np.mean(ppg_segment**2))
+    features['mad'] = np.mean(np.abs(ppg_segment - np.mean(ppg_segment)))
+    features['cv'] = np.std(ppg_segment) / (np.mean(ppg_segment) + 1e-8)
+    
+    # Peak analysis
+    peaks, properties = find_peaks(ppg_segment, height=np.mean(ppg_segment), distance=fs*0.6)
+    
+    if len(peaks) >= 3:
+        peak_intervals = np.diff(peaks) / fs
+        peak_heights = properties['peak_heights']
+        
+        features['peak_count'] = len(peaks)
+        features['peak_mean_height'] = np.mean(peak_heights)
+        features['peak_std_height'] = np.std(peak_heights)
+        features['peak_mean_interval'] = np.mean(peak_intervals)
+        features['peak_std_interval'] = np.std(peak_intervals)
+        features['peak_cv_interval'] = np.std(peak_intervals) / (np.mean(peak_intervals) + 1e-8)
+        
+        # HRV features
+        rr_intervals = np.diff(peaks) / fs * 1000  # Convert to ms
+        features['hrv_rmssd'] = np.sqrt(np.mean(np.diff(rr_intervals)**2))
+        features['hrv_sdnn'] = np.std(rr_intervals)
+        features['hrv_mean'] = np.mean(rr_intervals)
+        features['hrv_cv'] = np.std(rr_intervals) / (np.mean(rr_intervals) + 1e-8)
+        
+        # Heart rate
+        hr_values = 60 / peak_intervals
+        features['mean_hr'] = np.mean(hr_values)
+        features['hr_std'] = np.std(hr_values)
+        
+    else:
+        # Default values when insufficient peaks
+        for key in ['peak_count', 'peak_mean_height', 'peak_std_height', 'peak_mean_interval', 
+                   'peak_std_interval', 'peak_cv_interval', 'hrv_rmssd', 'hrv_sdnn', 
+                   'hrv_mean', 'hrv_cv', 'mean_hr', 'hr_std']:
+            features[key] = 0
+    
+    # Frequency domain features
+    freqs, psd = welch(ppg_segment, fs=fs, nperseg=min(len(ppg_segment)//4, 256))
+    
+    # Frequency bands
+    lf_band = (freqs >= 0.04) & (freqs < 0.15)
+    hf_band = (freqs >= 0.15) & (freqs < 0.4)
+    
+    lf_power = np.trapz(psd[lf_band], freqs[lf_band]) if np.any(lf_band) else 0
+    hf_power = np.trapz(psd[hf_band], freqs[hf_band]) if np.any(hf_band) else 0
+    
+    features['freq_lf_power'] = lf_power
+    features['freq_hf_power'] = hf_power
+    features['freq_lf_hf_ratio'] = lf_power / (hf_power + 1e-8)
+    features['freq_peak_frequency'] = freqs[np.argmax(psd)] if len(psd) > 0 else 0
+    
+    # Spectral entropy
+    psd_norm = psd / (np.sum(psd) + 1e-8)
+    features['freq_spectral_entropy'] = -np.sum(psd_norm * np.log(psd_norm + 1e-10))
+    
+    # Morphological features
+    if len(ppg_segment) > 5:
+        smoothed = savgol_filter(ppg_segment, window_length=5, polyorder=2)
+    else:
+        smoothed = ppg_segment
+    
+    first_derivative = np.gradient(smoothed)
+    second_derivative = np.gradient(first_derivative)
+    
+    features['morph_signal_energy'] = np.sum(ppg_segment**2)
+    features['morph_first_deriv_mean'] = np.mean(first_derivative)
+    features['morph_first_deriv_std'] = np.std(first_derivative)
+    features['morph_second_deriv_mean'] = np.mean(second_derivative)
+    features['morph_second_deriv_std'] = np.std(second_derivative)
+    features['morph_zero_crossings_1st'] = len(np.where(np.diff(np.signbit(first_derivative)))[0])
+    features['morph_zero_crossings_2nd'] = len(np.where(np.diff(np.signbit(second_derivative)))[0])
+    features['morph_signal_complexity'] = np.std(first_derivative) / (np.std(ppg_segment) + 1e-8)
+    
+    return features
+
 class OptimizedPPGFeatureExtractor:
     """Optimized feature extraction for BP prediction"""
     
