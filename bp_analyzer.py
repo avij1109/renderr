@@ -225,7 +225,7 @@ class OptimizedPPGFeatureExtractor:
         return features
 
 class BPAnalyzer:
-    def __init__(self, model_path: str = "optimized_bp_model_random-forest-optimized.joblib"):
+    def __init__(self, model_path: str = "compact_bp_model.joblib"):
         """
         Initialize Enhanced BP Analyzer with optimized Random Forest model
         
